@@ -2,173 +2,148 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 
+// Fetch FRK stock additions and rice entries with adNumber
+router.get('/frk-balance', (req, res) => {
+  const { company, year } = req.query;
+  const parsedYear = parseInt(year, 10);
 
-// Add a new FRK entry
-router.post('/', (req, res) => {
-  const { date, company, year, KGs, debited_KGs = 0 } = req.body;
-
-  if (!date || !company || !year || (KGs === undefined && debited_KGs === undefined)) {
-    return res.status(400).json({ error: 'Required fields are missing' });
+  if (!company || !parsedYear) {
+    return res.status(400).json({ error: 'Company and valid year are required.' });
   }
 
   db.serialize(() => {
-    db.run('BEGIN TRANSACTION', (err) => {
-      if (err) {
-        console.error('Error starting transaction:', err);
-        return res.status(500).json({ error: 'Transaction failed to start.' });
-      }
-
-      // Fetch the last entry to get the previous remaining_KGs
-      const fetchLastFrkSql = `
-        SELECT remaining_KGs
-        FROM frk_details 
-        WHERE company = ? AND year = ? 
-        ORDER BY date DESC, id DESC 
-        LIMIT 1
-      `;
-
-      db.get(fetchLastFrkSql, [company, year], (err, lastEntry) => {
-        if (err) {
-          console.error('Error fetching last FRK entry:', err);
-          db.run('ROLLBACK');
-          return res.status(500).json({ error: 'Failed to fetch previous FRK entry.' });
-        }
-
-        // Ensure numeric conversion
-        const previousRemainingKGs = lastEntry ? parseFloat(lastEntry.remaining_KGs) : 0;
-        const currentKGs = parseFloat(KGs);
-        const currentDebitedKGs = parseFloat(debited_KGs);
-
-        let newRemainingKGs;
-
-        if (currentKGs > 0 && currentDebitedKGs === 0) {
-          newRemainingKGs = previousRemainingKGs + currentKGs;
-        } else if (currentKGs === 0 && currentDebitedKGs > 0) {
-          newRemainingKGs = previousRemainingKGs - currentDebitedKGs;
-        } else {
-          db.run('ROLLBACK');
-          return res.status(400).json({ error: 'Invalid FRK entry. Either KGs or debited_KGs should be greater than zero.' });
-        }
-
-        const insertFrkEntrySql = `
-          INSERT INTO frk_details (date, company, year, KGs, debited_KGs, remaining_KGs)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `;
-
-        db.run(insertFrkEntrySql, [date, company, year, currentKGs, currentDebitedKGs, newRemainingKGs], function(err) {
-          if (err) {
-            console.error('Error inserting FRK entry:', err);
-            db.run('ROLLBACK', () => {
-              return res.status(500).json({ error: 'Failed to add FRK stock.' });
-            });
-            return;
-          }
-
-          db.run('COMMIT', (err) => {
-            if (err) {
-              console.error('Error committing transaction:', err);
-              db.run('ROLLBACK', () => {
-                return res.status(500).json({ error: 'Transaction commit failed.' });
-              });
-              return;
-            }
-            res.json({ id: this.lastID, message: 'FRK stock added successfully' });
-          });
-        });
-      });
-    });
-  });
-});
-
-module.exports = router;
-
-// Get all FRK entries or filter by company and year
-router.get('/', (req, res) => {
-  const { company, year } = req.query;
-
-  // Ensure that company and year are always provided
-  if (!company || !year) {
-    return res.status(400).json({ error: 'Company and year are required.' });
-  }
-
-  const sql = 'SELECT * FROM frk_details WHERE company = ? AND year = ?';
-  const values = [company, year];
-
-  db.all(sql, values, (err, results) => {
-    if (err) {
-      console.error('Error fetching FRK entries:', err);
-      return res.status(500).json({ error: 'Failed to fetch FRK entries.' });
-    }
-    res.json(results);
-  });
-});
-
-// Delete an FRK entry by ID, company, and year
-router.delete('/:id', (req, res) => {
-  const { id } = req.params;
-  const { company, year } = req.query;
-
-  if (!id || !company || !year) {
-    return res.status(400).json({ error: 'ID, company, and year are required.' });
-  }
-
-  db.serialize(() => {
-    db.run('BEGIN TRANSACTION');
-
-    const fetchCurrentFrkSql = `
-      SELECT KGs, debited_KGs, remaining_KGs
-      FROM frk_details
-      WHERE id = ? AND company = ? AND year = ?
+    // Fetch the FRK stock additions, ordered by date
+    const getFrkStockSql = `
+      SELECT id, date, frk
+      FROM frk_entries
+      WHERE company = ? AND year = ?
+      ORDER BY date ASC
     `;
 
-    db.get(fetchCurrentFrkSql, [id, company, year], (err, currentEntry) => {
+    db.all(getFrkStockSql, [company, parsedYear], (err, frkStocks) => {
       if (err) {
-        console.error('Error fetching current FRK entry:', err);
-        db.run('ROLLBACK');
-        return res.status(500).json({ error: 'Failed to fetch FRK entry' });
+        console.error('Error fetching FRK stock entries:', err);
+        return res.status(500).json({ error: 'Failed to fetch FRK stock entries' });
       }
 
-      if (!currentEntry) {
-        db.run('ROLLBACK');
-        return res.status(404).json({ error: 'FRK entry not found.' });
-      }
+      // Fetch rice entries with adNumber, ordered by date
+      const getRiceEntriesSql = `
+        SELECT date, adNumber, frk
+        FROM rice_entries
+        WHERE adNumber IS NOT NULL AND company = ? AND year = ?
+        ORDER BY date ASC
+      `;
 
-      const deleteFrkEntrySql = 'DELETE FROM frk_details WHERE id = ? AND company = ? AND year = ?';
-      db.run(deleteFrkEntrySql, [id, company, year], function(err) {
+      db.all(getRiceEntriesSql, [company, parsedYear], (err, riceEntries) => {
         if (err) {
-          console.error('Error deleting FRK entry:', err);
-          db.run('ROLLBACK');
-          return res.status(500).json({ error: 'Failed to delete FRK entry' });
+          console.error('Error fetching rice entries:', err);
+          return res.status(500).json({ error: 'Failed to fetch rice entries' });
         }
 
-        // After deleting, adjust the remaining_KGs for subsequent entries
-        const adjustFrkEntriesSql = `
-          UPDATE frk_details
-          SET remaining_KGs = remaining_KGs - ?
-          WHERE id > ? AND company = ? AND year = ?
-        `;
+        // Combine both FRK stocks and rice entries in a single array
+        const combinedEntries = [];
 
-        const adjustmentAmount = currentEntry.KGs > 0 ? currentEntry.KGs : -currentEntry.debited_KGs;
-
-        db.run(adjustFrkEntriesSql, [adjustmentAmount, id, company, year], function(err) {
-          if (err) {
-            console.error('Error adjusting subsequent FRK entries:', err);
-            db.run('ROLLBACK');
-            return res.status(500).json({ error: 'Failed to adjust FRK entries' });
-          }
-
-          db.run('COMMIT', (err) => {
-            if (err) {
-              console.error('Error committing transaction:', err);
-              db.run('ROLLBACK');
-              return res.status(500).json({ error: 'Failed to commit transaction' });
-            }
-
-            res.json({ message: 'FRK entry deleted successfully' });
+        // Add FRK stock entries
+        frkStocks.forEach(stock => {
+          combinedEntries.push({
+            id: stock.id,
+            date: stock.date,
+            frkAdded: stock.frk,
+            frkUsed: 0, // No FRK used for stock addition
           });
         });
+
+        // Add rice entries (FRK used)
+        riceEntries.forEach(rice => {
+          combinedEntries.push({
+            date: rice.date,
+            frkAdded: 0, // No FRK added for rice entry
+            frkUsed: rice.frk,
+          });
+        });
+
+        // Sort all entries by date
+        combinedEntries.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        // Calculate the cumulative FRK balance
+        let cumulativeBalance = 0;
+        const resultEntries = combinedEntries.map(entry => {
+          cumulativeBalance += entry.frkAdded - entry.frkUsed;
+
+          return {
+            id: entry.id,
+            date: entry.date,
+            frkAdded: entry.frkAdded,
+            frkUsed: entry.frkUsed,
+            balance: cumulativeBalance
+          };
+        });
+
+        // Return the calculated stock and rice entry deductions
+        res.json(resultEntries);
       });
     });
+  });
+});
+
+// Add a new FRK entry to the database
+router.post('/', (req, res) => {
+  const { company, year, date, frk } = req.body;
+
+  // Validate the request body
+  if (!company || !year || !date || frk === undefined) {
+    return res.status(400).json({ error: 'Company, year, date, and frk are required.' });
+  }
+
+  const parsedYear = parseInt(year, 10);
+  const parsedFrk = parseFloat(frk);
+
+  // Validate year and FRK values
+  if (isNaN(parsedYear) || isNaN(parsedFrk)) {
+    return res.status(400).json({ error: 'Invalid year or FRK amount.' });
+  }
+
+  // SQL query to insert a new FRK entry
+  const insertFrkSql = `
+    INSERT INTO frk_entries (company, year, date, frk)
+    VALUES (?, ?, ?, ?)
+  `;
+
+  // Insert into the database
+  db.run(insertFrkSql, [company, parsedYear, date, parsedFrk], function (err) {
+    if (err) {
+      console.error('Error inserting new FRK entry:', err);
+      return res.status(500).json({ error: 'Failed to insert FRK entry.' });
+    }
+
+    // Return success message
+    res.status(201).json({ message: 'FRK entry added successfully!', id: this.lastID });
+  });
+});
+
+// Delete an FRK entry by ID
+router.delete('/:id', (req, res) => {
+  const { id } = req.params;
+
+  if (!id) {
+    return res.status(400).json({ error: 'ID is required to delete an entry.' });
+  }
+
+  // SQL query to delete an FRK entry by its ID
+  const deleteFrkSql = `DELETE FROM frk_entries WHERE id = ?`;
+
+  db.run(deleteFrkSql, [id], function (err) {
+    if (err) {
+      console.error('Error deleting FRK entry:', err);
+      return res.status(500).json({ error: 'Failed to delete FRK entry.' });
+    }
+
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'FRK entry not found.' });
+    }
+
+    // Return success message
+    res.status(200).json({ message: 'FRK entry deleted successfully.' });
   });
 });
 

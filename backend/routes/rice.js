@@ -2,11 +2,37 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 
-// Add a new rice entry with duplicate check and subtract from FRK stock
+// Add a new rice entry with duplicate check
 router.post('/', (req, res) => {
-  const { date, godown, challanNo, lorryNo, variety, onbBags, ssBags, swpBags, tonsKgs, moisture, adNumber, adDate, company, year, frk } = req.body;
+  const {
+    date,
+    godown,
+    challanNo,
+    lorryNo,
+    variety,
+    onbBags,
+    ssBags,
+    swpBags,
+    tonsKgs,
+    moisture,
+    adNumber,
+    adDate,
+    company,
+    year,
+    frk
+  } = req.body;
 
-  if (!date || !godown || !challanNo || !lorryNo || !variety || !company || !year || frk === undefined) {
+  // Validate required fields
+  if (
+    !date ||
+    !godown ||
+    !challanNo ||
+    !lorryNo ||
+    !variety ||
+    !company ||
+    !year ||
+    frk === undefined
+  ) {
     return res.status(400).json({ error: 'Required fields are missing' });
   }
 
@@ -14,7 +40,11 @@ router.post('/', (req, res) => {
     db.run('BEGIN TRANSACTION');
 
     // Check for duplicate challanNo within the same company and year
-    const checkDuplicateSql = 'SELECT COUNT(*) AS count FROM rice_entries WHERE challanNo = ? AND company = ? AND year = ?';
+    const checkDuplicateSql = `
+      SELECT COUNT(*) AS count
+      FROM rice_entries
+      WHERE challanNo = ? AND company = ? AND year = ?
+    `;
     db.get(checkDuplicateSql, [challanNo, company, year], (err, result) => {
       if (err) {
         console.error('Error checking for duplicate challanNo:', err);
@@ -33,7 +63,23 @@ router.post('/', (req, res) => {
         ) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
-      const riceValues = [date, godown, challanNo, lorryNo, variety, onbBags, ssBags, swpBags, tonsKgs, moisture, adNumber, adDate, company, year, frk];
+      const riceValues = [
+        date,
+        godown,
+        challanNo,
+        lorryNo,
+        variety,
+        onbBags,
+        ssBags,
+        swpBags,
+        tonsKgs,
+        moisture,
+        adNumber,
+        adDate,
+        company,
+        year,
+        frk
+      ];
 
       db.run(insertRiceEntrySql, riceValues, function(err) {
         if (err) {
@@ -42,45 +88,15 @@ router.post('/', (req, res) => {
           return res.status(500).json({ error: 'Failed to insert new rice entry' });
         }
 
-        // Only update FRK if adDate is provided
-        if (adDate) {
-          const insertFrkEntrySql = `
-            INSERT INTO frk_details (date, company, year, KGs, debited_KGs, remaining_KGs)
-            SELECT ?, ?, ?, 0, ?, remaining_KGs - ? 
-            FROM frk_details 
-            WHERE company = ? AND year = ? 
-            ORDER BY date DESC LIMIT 1
-          `;
-          const frkValues = [adDate, company, year, frk, frk, company, year];
+        db.run('COMMIT', (err) => {
+          if (err) {
+            console.error('Error committing transaction:', err);
+            db.run('ROLLBACK');
+            return res.status(500).json({ error: 'Failed to commit transaction' });
+          }
 
-          db.run(insertFrkEntrySql, frkValues, function(err) {
-            if (err) {
-              console.error('Error inserting FRK entry:', err);
-              db.run('ROLLBACK');
-              return res.status(500).json({ error: 'Failed to update FRK entry' });
-            }
-
-            db.run('COMMIT', (err) => {
-              if (err) {
-                console.error('Error committing transaction:', err);
-                db.run('ROLLBACK');
-                return res.status(500).json({ error: 'Failed to commit transaction' });
-              }
-
-              res.status(201).json({ id: this.lastID, message: 'Rice entry added and FRK entry created.' });
-            });
-          });
-        } else {
-          db.run('COMMIT', (err) => {
-            if (err) {
-              console.error('Error committing transaction:', err);
-              db.run('ROLLBACK');
-              return res.status(500).json({ error: 'Failed to commit transaction' });
-            }
-
-            res.status(201).json({ id: this.lastID, message: 'Rice entry added without updating FRK.' });
-          });
-        }
+          res.status(201).json({ id: this.lastID, message: 'Rice entry added successfully.' });
+        });
       });
     });
   });
@@ -88,9 +104,25 @@ router.post('/', (req, res) => {
 
 // Update an existing rice entry
 router.put('/:challanNo', (req, res) => {
-  const { date, godown, lorryNo, variety, onbBags, ssBags, swpBags, tonsKgs, moisture, adNumber, adDate, company, year, frk } = req.body;
+  const {
+    date,
+    godown,
+    lorryNo,
+    variety,
+    onbBags,
+    ssBags,
+    swpBags,
+    tonsKgs,
+    moisture,
+    adNumber,
+    adDate,
+    company,
+    year,
+    frk
+  } = req.body;
   const { challanNo } = req.params;
 
+  // Validate required fields
   if (!challanNo || !company || !year) {
     return res.status(400).json({ error: 'Challan No, company, and year are required' });
   }
@@ -104,7 +136,25 @@ router.put('/:challanNo', (req, res) => {
       SET date = ?, godown = ?, lorryNo = ?, variety = ?, onbBags = ?, ssBags = ?, swpBags = ?, tonsKgs = ?, moisture = ?, adNumber = ?, adDate = ?, company = ?, year = ?, frk = ?
       WHERE challanNo = ? AND company = ? AND year = ?
     `;
-    const riceValues = [date, godown, lorryNo, variety, onbBags, ssBags, swpBags, tonsKgs, moisture, adNumber, adDate, company, year, frk, challanNo, company, year];
+    const riceValues = [
+      date,
+      godown,
+      lorryNo,
+      variety,
+      onbBags,
+      ssBags,
+      swpBags,
+      tonsKgs,
+      moisture,
+      adNumber,
+      adDate,
+      company,
+      year,
+      frk,
+      challanNo,
+      company,
+      year
+    ];
 
     db.run(updateRiceEntrySql, riceValues, function(err) {
       if (err) {
@@ -113,59 +163,37 @@ router.put('/:challanNo', (req, res) => {
         return res.status(500).json({ error: 'Failed to update rice entry' });
       }
 
-      // Only update FRK if adDate is provided
-      if (adDate) {
-        const insertFrkEntrySql = `
-          INSERT INTO frk_details (date, company, year, KGs, debited_KGs, remaining_KGs)
-          SELECT ?, ?, ?, 0, ?, remaining_KGs - ? 
-          FROM frk_details 
-          WHERE company = ? AND year = ? 
-          ORDER BY date DESC LIMIT 1
-        `;
-        const frkValues = [adDate, company, year, frk, frk, company, year];
+      db.run('COMMIT', (err) => {
+        if (err) {
+          console.error('Error committing transaction:', err);
+          db.run('ROLLBACK');
+          return res.status(500).json({ error: 'Failed to commit transaction' });
+        }
 
-        db.run(insertFrkEntrySql, frkValues, function(err) {
-          if (err) {
-            console.error('Error inserting FRK entry:', err);
-            db.run('ROLLBACK');
-            return res.status(500).json({ error: 'Failed to update FRK entry' });
-          }
-
-          db.run('COMMIT', (err) => {
-            if (err) {
-              console.error('Error committing transaction:', err);
-              db.run('ROLLBACK');
-              return res.status(500).json({ error: 'Failed to commit transaction' });
-            }
-
-            res.json({ message: 'Rice entry updated and FRK entry created.' });
-          });
-        });
-      } else {
-        db.run('COMMIT', (err) => {
-          if (err) {
-            console.error('Error committing transaction:', err);
-            db.run('ROLLBACK');
-            return res.status(500).json({ error: 'Failed to commit transaction' });
-          }
-
-          res.json({ message: 'Rice entry updated without updating FRK.' });
-        });
-      }
+        res.json({ message: 'Rice entry updated successfully.' });
+      });
     });
   });
 });
 
-
 // Get all rice entries or fetch a specific entry by challanNo, year, and company
 router.get('/', (req, res) => {
-  const { challanNo, year, company } = req.query;
+  const { company, year, fromDate, toDate,challanNo } = req.query;
   if (!company || !year) {
     return res.status(400).json({ error: 'Company and year are required.' });
   }
 
   let sql = 'SELECT * FROM rice_entries WHERE company = ? AND year = ?';
   let values = [company, year];
+
+  if (fromDate) {
+    sql += ' AND date >= ?';
+    values.push(fromDate);
+  }
+  if (toDate) {
+    sql += ' AND date <= ?';
+    values.push(toDate);
+  }
 
   if (challanNo) {
     sql += ' AND challanNo = ?';

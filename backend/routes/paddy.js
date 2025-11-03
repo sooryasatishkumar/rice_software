@@ -68,7 +68,7 @@ router.put('/:issueMemoId', (req, res) => {
 
 // Get paddy entries by issueMemoId, company, and year
 router.get('/', (req, res) => {
-  const { issueMemoId, company, year } = req.query;
+  const { issueMemoId, company, year,fromDate,toDate } = req.query;
 
   if (!company || !year) {
     return res.status(400).json({ error: 'Company and year are required.' });
@@ -76,6 +76,16 @@ router.get('/', (req, res) => {
 
   let sql = 'SELECT * FROM paddy_entries WHERE company = ? AND year = ?';
   let values = [company, year];
+
+  if (fromDate) {
+    sql += ' AND date >= ?';
+    values.push(fromDate);
+  }
+  if (toDate) {
+    sql += ' AND date <= ?';
+    values.push(toDate);
+  }
+
 
   if (issueMemoId) {
     sql += ' AND issueMemoId = ?';
